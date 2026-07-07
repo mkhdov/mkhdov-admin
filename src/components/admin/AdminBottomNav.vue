@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { supabase } from '../../lib/supabase'
 import {
@@ -18,6 +18,8 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const unreadInboxCount = ref(0)
+let inboxSubscription: ReturnType<typeof supabase.channel> | null = null
 
 const navItems = [
   { label: 'Dashboard', to: '/admin/dashboard', icon: LayoutDashboard },
@@ -34,13 +36,54 @@ const navItems = [
 
 const activePath = computed(() => route.path)
 const isActive = (path: string) => activePath.value === path
+const hasUnreadInbox = computed(() => unreadInboxCount.value > 0)
+
+async function loadUnreadInboxCount() {
+  const { count, error } = await supabase
+    .from('conversations')
+    .select('*', { count: 'exact', head: true })
+    .gt('unread_count_admin', 0)
+
+  if (error) {
+    console.error('Error loading unread inbox count:', error)
+    return
+  }
+
+  unreadInboxCount.value = count ?? 0
+}
+
+function subscribeToInboxUnread() {
+  inboxSubscription = supabase
+    .channel('admin_nav_inbox_unread')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'conversations',
+      },
+      () => {
+        void loadUnreadInboxCount()
+      }
+    )
+    .subscribe()
+}
 
 const signOut = async () => {
   await supabase.auth.signOut()
   await router.push('/admin/login')
 }
 
-// Optional: logic to detect scrolling to hide/show the bottom nav (if desired)
+onMounted(() => {
+  void loadUnreadInboxCount()
+  subscribeToInboxUnread()
+})
+
+onUnmounted(() => {
+  if (inboxSubscription) {
+    supabase.removeChannel(inboxSubscription)
+  }
+})
 </script>
 
 <template>
@@ -55,6 +98,11 @@ const signOut = async () => {
             :title="item.label"
           >
             <component :is="item.icon" class="bottom-nav__icon" />
+            <span
+              v-if="item.to === '/admin/inbox' && hasUnreadInbox"
+              class="bottom-nav__unread-dot"
+              aria-label="Unread inbox messages"
+            />
             <span class="bottom-nav__label">{{ item.label }}</span>
           </RouterLink>
         </li>
@@ -118,6 +166,7 @@ const signOut = async () => {
 }
 
 .bottom-nav__link {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -154,6 +203,18 @@ const signOut = async () => {
   width: 22px;
   height: 22px;
   stroke-width: 2;
+}
+
+.bottom-nav__unread-dot {
+  position: absolute;
+  top: 7px;
+  right: 13px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.14);
 }
 
 .bottom-nav__label {

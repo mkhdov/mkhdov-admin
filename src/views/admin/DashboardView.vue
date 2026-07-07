@@ -77,7 +77,7 @@ async function loadStatCards() {
     supabase.from('page_views').select('*', { count: 'exact', head: true }).gte('visited_at', startOfWeek.toISOString()),
     supabase.from('page_views').select('*', { count: 'exact', head: true }).gte('visited_at', startOfMonth.toISOString()),
     supabase.from('page_views').select('*', { count: 'exact', head: true }),
-    supabase.from('messages').select('*', { count: 'exact', head: true }).eq('read', false),
+    supabase.from('conversations').select('*', { count: 'exact', head: true }).gt('unread_count_admin', 0),
   ])
 
   totalToday.value    = todayCount   ?? 0

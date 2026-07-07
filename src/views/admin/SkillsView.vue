@@ -115,7 +115,7 @@ function onDragStart(event: DragEvent, skill: Skill) {
   }
 }
 
-function onDragEnter(event: DragEvent, skill: Skill) {
+function onDragEnter(_event: DragEvent, skill: Skill) {
   if (draggedSkill.value && draggedSkill.value.id !== skill.id) {
     dragOverId.value = skill.id
   }
@@ -126,7 +126,7 @@ function onDragEnd() {
   dragOverId.value = null
 }
 
-async function onDrop(event: DragEvent, targetSkill: Skill) {
+async function onDrop(_event: DragEvent, targetSkill: Skill) {
   if (!draggedSkill.value || draggedSkill.value.id === targetSkill.id) {
     dragOverId.value = null
     return

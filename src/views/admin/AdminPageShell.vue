@@ -7,10 +7,15 @@ defineProps<{
 <template>
   <section class="admin-page">
     <h1>{{ title }}</h1>
+    <slot />
   </section>
 </template>
 
 <style scoped>
+.admin-page {
+  min-height: 100%;
+}
+
 .admin-page h1 {
   margin: 0;
   font-family: 'Space Grotesk', system-ui, sans-serif;
