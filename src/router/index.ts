@@ -68,6 +68,18 @@ const router = createRouter({
           meta: { requiresAuth: true, title: 'Projects' },
         },
         {
+          path: 'projects/new',
+          name: 'admin-projects-new',
+          component: () => import('../views/admin/ProjectEditorView.vue'),
+          meta: { requiresAuth: true, title: 'New Project' },
+        },
+        {
+          path: 'projects/:id',
+          name: 'admin-projects-edit',
+          component: () => import('../views/admin/ProjectEditorView.vue'),
+          meta: { requiresAuth: true, title: 'Edit Project' },
+        },
+        {
           path: 'skills',
           name: 'admin-skills',
           component: () => import('../views/admin/SkillsView.vue'),

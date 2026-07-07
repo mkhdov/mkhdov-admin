@@ -1,46 +1,37 @@
 <script setup lang="ts">
-import AdminSidebar from '../components/admin/AdminSidebar.vue'
-import { useResizableSidebar } from '../composables/useResizableSidebar'
-
-const { sidebarWidth, isResizing, startResize } = useResizableSidebar()
+import AdminBottomNav from '../components/admin/AdminBottomNav.vue'
 </script>
 
 <template>
-  <div class="admin-layout" :class="{ 'admin-layout--resizing': isResizing }">
-    <AdminSidebar :width="sidebarWidth" @start-resize="startResize" />
-
+  <div class="admin-layout">
     <main class="admin-layout__content">
       <RouterView />
     </main>
+
+    <AdminBottomNav />
   </div>
 </template>
 
 <style scoped>
 .admin-layout {
   display: flex;
+  flex-direction: column;
   min-height: 100svh;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 44%, #ffffff 100%);
-}
-
-.admin-layout--resizing {
-  cursor: col-resize;
-  user-select: none;
+  position: relative;
 }
 
 .admin-layout__content {
   flex: 1;
-  min-width: 0;
   padding: 32px 28px;
+  padding-bottom: 120px; /* Leave space for bottom nav */
   overflow-y: auto;
 }
 
 @media (max-width: 768px) {
-  .admin-layout {
-    flex-direction: column;
-  }
-
   .admin-layout__content {
     padding: 24px 16px;
+    padding-bottom: 100px;
   }
 }
 </style>

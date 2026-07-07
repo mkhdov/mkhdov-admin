@@ -474,6 +474,7 @@ const rangeTitleMap: Record<Range, string> = {
   display: flex;
   gap: 1.25rem;
   margin-bottom: 1.25rem;
+  min-width: 0;
 }
 .chart-card {
   background: #fff;
@@ -481,10 +482,11 @@ const rangeTitleMap: Record<Range, string> = {
   border-radius: 20px;
   padding: 1.5rem;
   box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+  min-width: 0;
 }
-.chart-card.wide   { flex: 2; }
-.chart-card.narrow { flex: 1; }
-.chart-card.full   { flex: 1; }
+.chart-card.wide   { flex: 2; min-width: 0; }
+.chart-card.narrow { flex: 1; min-width: 0; }
+.chart-card.full   { flex: 1; min-width: 0; }
 
 .chart-header {
   display: flex;
