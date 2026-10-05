@@ -21,12 +21,14 @@ const slug = ref('')
 const excerpt = ref('')
 const author = ref('Olimjon Makhmudov')
 const coverImageUrl = ref('')
+const audioUrl = ref('')
 const tagInput = ref('')
 const tags = ref<string[]>([])
 const published = ref(false)
 const publishedAt = ref('')
 const saving = ref(false)
 const uploading = ref(false)
+const uploadingAudio = ref(false)
 const saveMsg = ref('')
 const slugTouched = ref(false)
 
@@ -79,6 +81,7 @@ async function loadPost() {
   excerpt.value = data.excerpt ?? ''
   author.value = data.author ?? 'Olimjon Makhmudov'
   coverImageUrl.value = data.cover_image_url ?? ''
+  audioUrl.value = data.audio_url ?? ''
   tags.value = Array.isArray(data.tags) ? data.tags : []
   published.value = Boolean(data.published)
   publishedAt.value = toDatetimeLocal(data.published_at)
@@ -106,6 +109,7 @@ async function save() {
     excerpt: excerpt.value.trim() || null,
     content: editor.value?.getHTML() ?? '',
     cover_image_url: coverImageUrl.value || null,
+    audio_url: audioUrl.value || null,
     author: author.value.trim() || 'Olimjon Makhmudov',
     tags: tags.value,
     published: published.value,
@@ -152,6 +156,25 @@ async function uploadImage(event: Event, mode: 'cover' | 'inline') {
     editor.value?.chain().focus().setImage({ src: data.publicUrl }).run()
   }
   uploading.value = false
+}
+
+async function uploadAudio(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  uploadingAudio.value = true
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-')
+  const path = `blog/audio/${Date.now()}-${safeName}`
+  const { error } = await supabase.storage.from('article-images').upload(path, file)
+
+  if (error) {
+    alert(`Audio upload failed: ${error.message}`)
+    uploadingAudio.value = false
+    return
+  }
+
+  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
+  audioUrl.value = data.publicUrl
+  uploadingAudio.value = false
 }
 
 function addTag() {
@@ -263,6 +286,18 @@ function fromDatetimeLocal(value: string) {
           <label v-else class="upload-cover">
             {{ uploading ? 'Uploading...' : 'Upload cover' }}
             <input type="file" accept="image/*" hidden @change="uploadImage($event, 'cover')" />
+          </label>
+        </section>
+
+        <section class="side-card">
+          <h2>Audio Track</h2>
+          <div v-if="audioUrl" class="cover-preview">
+            <audio :src="audioUrl" controls style="width: 100%; border-radius: 8px;"></audio>
+            <button type="button" @click="audioUrl = ''">Remove Audio</button>
+          </div>
+          <label v-else class="upload-cover">
+            {{ uploadingAudio ? 'Uploading...' : 'Upload audio' }}
+            <input type="file" accept="audio/*" hidden @change="uploadAudio($event)" />
           </label>
         </section>
 
