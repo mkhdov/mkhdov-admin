@@ -159,6 +159,7 @@ function formatDate(iso: string | null) {
 
         <div class="actions">
           <a class="icon-btn" :href="postUrl(post)" target="_blank" rel="noopener noreferrer" title="Preview">View</a>
+          <button class="icon-btn" type="button" @click="router.push(`/admin/comments?type=blog&postId=${post.id}`)">Comments</button>
           <button class="icon-btn" type="button" @click="router.push(`/admin/blog/${post.id}`)">Edit</button>
           <button class="icon-btn" type="button" @click="togglePublished(post)">
             {{ post.published ? 'Unpublish' : 'Publish' }}

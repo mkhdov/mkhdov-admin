@@ -107,6 +107,15 @@ function formatDate(iso: string) {
 
         <!-- Actions -->
         <div class="article-actions">
+          <!-- Comments -->
+          <button
+              class="action-btn comments"
+              title="Comments & Reviews"
+              @click="router.push(`/admin/comments?type=article&postId=${article.id}`)"
+          >
+            💬
+          </button>
+
           <!-- Preview -->
           <button
               class="action-btn preview"

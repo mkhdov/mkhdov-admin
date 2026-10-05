@@ -74,6 +74,12 @@ const router = createRouter({
           meta: { requiresAuth: true, title: 'Inbox' },
         },
         {
+          path: 'comments',
+          name: 'admin-comments',
+          component: () => import('../views/admin/CommentsView.vue'),
+          meta: { requiresAuth: true, title: 'Comments & Reviews' },
+        },
+        {
           path: 'projects',
           name: 'admin-projects',
           component: () => import('../views/admin/ProjectsView.vue'),
