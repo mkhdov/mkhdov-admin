@@ -56,6 +56,18 @@ const router = createRouter({
           meta: { requiresAuth: true, title: 'Blog' },
         },
         {
+          path: 'blog/new',
+          name: 'admin-blog-new',
+          component: () => import('../views/admin/BlogEditorView.vue'),
+          meta: { requiresAuth: true, title: 'New Blog Post' },
+        },
+        {
+          path: 'blog/:id',
+          name: 'admin-blog-edit',
+          component: () => import('../views/admin/BlogEditorView.vue'),
+          meta: { requiresAuth: true, title: 'Edit Blog Post' },
+        },
+        {
           path: 'inbox',
           name: 'admin-inbox',
           component: () => import('../views/admin/InboxView.vue'),
