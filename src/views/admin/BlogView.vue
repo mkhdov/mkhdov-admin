@@ -12,7 +12,9 @@ import {
   CheckCircle2,
   Clock,
   Image as ImageIcon,
-  Mic
+  Mic,
+  Video,
+  Layers
 } from 'lucide-vue-next'
 import { supabase } from '../../lib/supabase'
 
@@ -29,7 +31,9 @@ interface BlogPost {
   updated_at: string | null
   created_at: string
   cover_image_url: string | null
+  image_urls: string[] | null
   audio_url: string | null
+  video_url: string | null
 }
 
 const router = useRouter()
@@ -67,19 +71,57 @@ const filteredPosts = computed(() => {
 
 onMounted(fetchPosts)
 
+function normalizeImageUrls(post: BlogPost): string[] {
+  const fromArray = Array.isArray(post.image_urls)
+    ? post.image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
+    : []
+  if (fromArray.length) return fromArray
+  return post.cover_image_url ? [post.cover_image_url] : []
+}
+
+function postImages(post: BlogPost): string[] {
+  return normalizeImageUrls(post)
+}
+
 async function fetchPosts() {
   loading.value = true
-  const { data, error } = await supabase
+  const extendedSelect =
+    'id, slug, title, excerpt, content, author, tags, published, published_at, updated_at, created_at, cover_image_url, image_urls, audio_url, video_url'
+
+  const { data: extendedData, error: extendedError } = await supabase
     .from('blog_posts')
-    .select('id, slug, title, excerpt, content, author, tags, published, published_at, updated_at, created_at, cover_image_url, audio_url')
+    .select(extendedSelect)
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('Error loading blog posts:', error)
-    posts.value = []
+  let rows: Record<string, unknown>[] = []
+
+  if (!extendedError) {
+    rows = (extendedData ?? []) as Record<string, unknown>[]
+  } else if (extendedError.message.includes('video_url') || extendedError.message.includes('image_urls')) {
+    const { data: fallbackData, error: fallbackError } = await supabase
+      .from('blog_posts')
+      .select('id, slug, title, excerpt, content, author, tags, published, published_at, updated_at, created_at, cover_image_url, audio_url')
+      .order('created_at', { ascending: false })
+
+    if (fallbackError) {
+      console.error('Error loading blog posts:', fallbackError)
+      posts.value = []
+      loading.value = false
+      return
+    }
+    rows = (fallbackData ?? []) as Record<string, unknown>[]
   } else {
-    posts.value = (data ?? []) as BlogPost[]
+    console.error('Error loading blog posts:', extendedError)
+    posts.value = []
+    loading.value = false
+    return
   }
+
+  posts.value = rows.map((row) => ({
+    ...(row as unknown as BlogPost),
+    image_urls: Array.isArray(row.image_urls) ? (row.image_urls as string[]) : null,
+    video_url: typeof row.video_url === 'string' ? row.video_url : null,
+  }))
   loading.value = false
 }
 
@@ -166,7 +208,7 @@ function plainTextPreview(text: string | null | undefined, maxLen = 180): string
         <span class="eyebrow">Feed &amp; Micro-Blog</span>
         <h1 class="page-title">Blog Posts</h1>
         <p class="page-sub">
-          Manage quick social updates, thoughts, images, and voice notes for your feed.
+          Manage quick social updates with photo carousels, video, and voice notes for your feed.
         </p>
       </div>
 
@@ -189,6 +231,14 @@ function plainTextPreview(text: string | null | undefined, maxLen = 180): string
           <span class="media-hint-btn">
             <ImageIcon :size="16" class="hint-icon image-hint" />
             <span>Photo / Media</span>
+          </span>
+          <span class="media-hint-btn">
+            <Layers :size="16" class="hint-icon carousel-hint" />
+            <span>Photo Carousel</span>
+          </span>
+          <span class="media-hint-btn">
+            <Video :size="16" class="hint-icon video-hint" />
+            <span>Video</span>
           </span>
           <span class="media-hint-btn">
             <Mic :size="16" class="hint-icon audio-hint" />
@@ -327,10 +377,20 @@ function plainTextPreview(text: string | null | undefined, maxLen = 180): string
         </div>
 
         <!-- Media Attachment Thumbnails -->
-        <div v-if="post.cover_image_url || post.audio_url" class="card-attachments-row">
-          <div v-if="post.cover_image_url" class="attachment-chip image-chip">
-            <img :src="post.cover_image_url" :alt="post.title" class="thumb-img" />
-            <span>Image attached</span>
+        <div
+          v-if="postImages(post).length || post.audio_url || post.video_url"
+          class="card-attachments-row"
+        >
+          <div v-if="postImages(post).length" class="attachment-chip image-chip">
+            <img :src="postImages(post)[0]" :alt="post.title" class="thumb-img" />
+            <span>
+              {{ postImages(post).length > 1 ? `${postImages(post).length} photos` : 'Photo attached' }}
+            </span>
+          </div>
+
+          <div v-if="post.video_url" class="attachment-chip video-chip">
+            <Video :size="15" />
+            <span>Video attached</span>
           </div>
 
           <div v-if="post.audio_url" class="attachment-chip audio-chip">
@@ -539,6 +599,14 @@ function plainTextPreview(text: string | null | undefined, maxLen = 180): string
 
 .hint-icon.image-hint {
   color: #10b981;
+}
+
+.hint-icon.carousel-hint {
+  color: #f59e0b;
+}
+
+.hint-icon.video-hint {
+  color: #ef4444;
 }
 
 .hint-icon.audio-hint {
@@ -828,6 +896,12 @@ function plainTextPreview(text: string | null | undefined, maxLen = 180): string
 .audio-chip {
   color: #6c63ff;
   border-color: rgba(108, 99, 255, 0.2);
+}
+
+.video-chip {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.04);
 }
 
 /* Tags */

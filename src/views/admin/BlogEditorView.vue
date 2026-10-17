@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Image as ImageIcon,
   Mic,
+  Video,
   Hash,
   Link as LinkIcon,
   Bold,
@@ -14,9 +15,14 @@ import {
   Quote,
   Send,
   Sparkles,
-  X
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Plus
 } from 'lucide-vue-next'
 import { supabase } from '../../lib/supabase'
+import ImageCarousel from '../../components/ImageCarousel.vue'
+import VideoPlayer from '../../components/VideoPlayer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,8 +33,10 @@ const postId = computed(() => route.params.id as string | undefined)
 // Form states
 const title = ref('') // Optional headline / topic
 const content = ref('') // Main post content
-const coverImageUrl = ref('')
+const imageUrls = ref<string[]>([])
 const audioUrl = ref('')
+const videoUrl = ref('')
+const MAX_PHOTOS = 10
 const author = ref('Olimjon Makhmudov')
 const tags = ref<string[]>([])
 const tagInput = ref('')
@@ -41,6 +49,7 @@ const slugTouched = ref(false)
 const saving = ref(false)
 const uploadingImage = ref(false)
 const uploadingAudio = ref(false)
+const uploadingVideo = ref(false)
 const saveMsg = ref('')
 const activeTab = ref<'compose' | 'preview'>('compose')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -91,8 +100,15 @@ async function loadPost() {
 
   title.value = data.title && data.title !== 'Untitled' ? data.title : ''
   content.value = data.content ?? ''
-  coverImageUrl.value = data.cover_image_url ?? ''
+  const loadedImages: string[] = Array.isArray(data.image_urls)
+    ? (data.image_urls as unknown[]).filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+    : []
+  if (loadedImages.length === 0 && data.cover_image_url) {
+    loadedImages.push(data.cover_image_url)
+  }
+  imageUrls.value = loadedImages
   audioUrl.value = data.audio_url ?? ''
+  videoUrl.value = data.video_url ?? ''
   author.value = data.author ?? 'Olimjon Makhmudov'
   tags.value = Array.isArray(data.tags) ? data.tags : []
   slug.value = data.slug ?? ''
@@ -153,44 +169,93 @@ function addLinkPrompt() {
 }
 
 // ── Media Upload Handlers ───────────────────────────────────
-async function handleImageUpload(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  uploadingImage.value = true
-
+async function uploadMediaFile(file: File, folder: 'images' | 'audio' | 'video'): Promise<string | null> {
   const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-  const path = `blog/images/${Date.now()}-${safeName}`
+  const path = `blog/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`
   const { error } = await supabase.storage.from('article-images').upload(path, file)
-
   if (error) {
-    alert(`Image upload failed: ${error.message}`)
-    uploadingImage.value = false
+    alert(`Upload failed: ${error.message}`)
+    return null
+  }
+  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
+  return data.publicUrl
+}
+
+async function handleImageUpload(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files ? Array.from(input.files) : []
+  if (!files.length) return
+
+  const remaining = MAX_PHOTOS - imageUrls.value.length
+  if (remaining <= 0) {
+    alert(`You can attach up to ${MAX_PHOTOS} photos per post.`)
+    input.value = ''
     return
   }
 
-  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
-  coverImageUrl.value = data.publicUrl
+  const toUpload = files.slice(0, remaining)
+  if (files.length > remaining) {
+    alert(`Only ${remaining} more photo(s) can be added (max ${MAX_PHOTOS}).`)
+  }
+
+  uploadingImage.value = true
+  for (const file of toUpload) {
+    const url = await uploadMediaFile(file, 'images')
+    if (url) imageUrls.value.push(url)
+  }
   uploadingImage.value = false
+  input.value = ''
+}
+
+function removeImageAt(index: number) {
+  imageUrls.value = imageUrls.value.filter((_, i) => i !== index)
+}
+
+function moveImage(index: number, direction: -1 | 1) {
+  const next = index + direction
+  if (next < 0 || next >= imageUrls.value.length) return
+  const list = [...imageUrls.value]
+  const [item] = list.splice(index, 1)
+  list.splice(next, 0, item)
+  imageUrls.value = list
+}
+
+function addImageFromUrl() {
+  const url = prompt('Paste image URL:')
+  if (!url?.trim()) return
+  if (imageUrls.value.length >= MAX_PHOTOS) {
+    alert(`You can attach up to ${MAX_PHOTOS} photos per post.`)
+    return
+  }
+  imageUrls.value.push(url.trim())
 }
 
 async function handleAudioUpload(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
   uploadingAudio.value = true
+  const url = await uploadMediaFile(file, 'audio')
+  if (url) audioUrl.value = url
+  uploadingAudio.value = false
+  ;(e.target as HTMLInputElement).value = ''
+}
 
-  const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-  const path = `blog/audio/${Date.now()}-${safeName}`
-  const { error } = await supabase.storage.from('article-images').upload(path, file)
+async function handleVideoUpload(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
 
-  if (error) {
-    alert(`Audio upload failed: ${error.message}`)
-    uploadingAudio.value = false
+  const maxBytes = 200 * 1024 * 1024
+  if (file.size > maxBytes) {
+    alert('Video must be 200 MB or smaller.')
+    ;(e.target as HTMLInputElement).value = ''
     return
   }
 
-  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
-  audioUrl.value = data.publicUrl
-  uploadingAudio.value = false
+  uploadingVideo.value = true
+  const url = await uploadMediaFile(file, 'video')
+  if (url) videoUrl.value = url
+  uploadingVideo.value = false
+  ;(e.target as HTMLInputElement).value = ''
 }
 
 // ── Tags Handlers ───────────────────────────────────────────
@@ -223,7 +288,7 @@ function addSuggestedTag(tag: string) {
 async function savePost() {
   const rawText = content.value.trim()
 
-  if (!rawText && !coverImageUrl.value && !audioUrl.value && !title.value.trim()) {
+  if (!rawText && !imageUrls.value.length && !audioUrl.value && !videoUrl.value && !title.value.trim()) {
     alert('Please enter some post content or attach media.')
     return
   }
@@ -253,7 +318,9 @@ async function savePost() {
     slug: finalSlug,
     content: content.value,
     excerpt: excerpt || null,
-    cover_image_url: coverImageUrl.value || null,
+    cover_image_url: imageUrls.value[0] || null,
+    image_urls: imageUrls.value,
+    video_url: videoUrl.value || null,
     audio_url: audioUrl.value || null,
     author: author.value.trim() || 'Olimjon Makhmudov',
     tags: tags.value,
@@ -267,7 +334,14 @@ async function savePost() {
     : await supabase.from('blog_posts').insert(payload)
 
   if (res.error) {
-    alert(`Save failed: ${res.error.message}`)
+    const msg = res.error.message || ''
+    if (msg.includes('video_url') || msg.includes('image_urls')) {
+      alert(
+        `Save failed: database columns for video/carousel photos are missing.\n\nRun add-video-and-carousel-schema.sql in Supabase SQL Editor, then try again.\n\nDetails: ${msg}`
+      )
+    } else {
+      alert(`Save failed: ${msg}`)
+    }
     saving.value = false
     return
   }
@@ -451,43 +525,121 @@ function formatPreviewContent(text: string): string {
           ></textarea>
         </div>
 
-        <!-- Attachments Card (Image + Audio) -->
+        <!-- Attachments Card (Photos, Video, Audio) -->
         <div class="composer-card media-card">
           <h2 class="card-subtitle">Media Attachments</h2>
 
-          <!-- Image Attachment -->
-          <div class="media-row">
-            <div class="media-slot">
-              <span class="media-slot-title">Photo / Image</span>
+          <!-- Multi-photo carousel (Instagram-style) -->
+          <div class="media-block photos-block">
+            <div class="media-block-head">
+              <span class="media-slot-title">Photos</span>
+              <span class="media-count-badge">{{ imageUrls.length }}/{{ MAX_PHOTOS }}</span>
+            </div>
+            <p class="media-block-hint">Add multiple photos — readers swipe through them like Instagram.</p>
 
-              <div v-if="coverImageUrl" class="media-preview-box image-preview">
-                <img :src="coverImageUrl" alt="Attached preview" />
+            <div v-if="imageUrls.length" class="photo-gallery-editor">
+              <div class="photo-thumb-grid">
+                <div
+                  v-for="(url, index) in imageUrls"
+                  :key="url + index"
+                  class="photo-thumb-item"
+                  :class="{ 'is-cover': index === 0 }"
+                >
+                  <img :src="url" :alt="`Photo ${index + 1}`" />
+                  <span v-if="index === 0" class="cover-badge">Cover</span>
+                  <div class="thumb-actions">
+                    <button
+                      type="button"
+                      class="thumb-action-btn"
+                      title="Move earlier"
+                      :disabled="index === 0"
+                      @click="moveImage(index, -1)"
+                    >
+                      <ChevronLeft :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="thumb-action-btn"
+                      title="Move later"
+                      :disabled="index === imageUrls.length - 1"
+                      @click="moveImage(index, 1)"
+                    >
+                      <ChevronRight :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="thumb-action-btn remove"
+                      title="Remove photo"
+                      @click="removeImageAt(index)"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="upload-controls photo-upload-row">
+              <label
+                class="btn-upload-file"
+                :class="{ disabled: imageUrls.length >= MAX_PHOTOS }"
+              >
+                <ImageIcon :size="16" />
+                <span>{{ uploadingImage ? 'Uploading...' : imageUrls.length ? 'Add More Photos' : 'Upload Photos' }}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  :disabled="uploadingImage || imageUrls.length >= MAX_PHOTOS"
+                  @change="handleImageUpload"
+                />
+              </label>
+              <button
+                type="button"
+                class="btn-add-url"
+                :disabled="imageUrls.length >= MAX_PHOTOS"
+                @click="addImageFromUrl"
+              >
+                <Plus :size="15" />
+                <span>Paste URL</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="media-row">
+            <!-- Video Attachment -->
+            <div class="media-slot">
+              <span class="media-slot-title">Video</span>
+
+              <div v-if="videoUrl" class="media-preview-box video-preview">
+                <video :src="videoUrl" controls playsinline class="preview-video-player"></video>
                 <button
                   type="button"
                   class="btn-remove-media"
-                  title="Remove image"
-                  @click="coverImageUrl = ''"
+                  title="Remove video"
+                  @click="videoUrl = ''"
                 >
                   <X :size="15" />
                 </button>
               </div>
 
               <div v-else class="upload-controls">
-                <label class="btn-upload-file">
-                  <ImageIcon :size="16" />
-                  <span>{{ uploadingImage ? 'Uploading...' : 'Upload Image' }}</span>
+                <label class="btn-upload-file video-upload-btn">
+                  <Video :size="16" />
+                  <span>{{ uploadingVideo ? 'Uploading...' : 'Upload Video' }}</span>
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="video/mp4,video/webm,video/quicktime,video/*"
                     hidden
-                    :disabled="uploadingImage"
-                    @change="handleImageUpload"
+                    :disabled="uploadingVideo"
+                    @change="handleVideoUpload"
                   />
                 </label>
                 <input
-                  v-model="coverImageUrl"
+                  v-model="videoUrl"
                   type="url"
-                  placeholder="Or paste image URL"
+                  placeholder="Or paste video URL"
                   class="input-url"
                 />
               </div>
@@ -647,9 +799,16 @@ function formatPreviewContent(text: string): string {
                 v-html="formatPreviewContent(content) || '<p class=\'placeholder-text\'>Your post text will appear here...</p>'"
               ></div>
 
-              <!-- Media Preview -->
-              <div v-if="coverImageUrl" class="mock-media-image">
-                <img :src="coverImageUrl" alt="Attached media" />
+              <!-- Photo carousel preview -->
+              <ImageCarousel
+                v-if="imageUrls.length"
+                :images="imageUrls"
+                :alt="title || 'Post photos'"
+              />
+
+              <!-- Video preview -->
+              <div v-if="videoUrl" class="mock-media-video">
+                <VideoPlayer :src="videoUrl" :title="title || 'Post video'" />
               </div>
 
               <!-- Audio Preview -->
@@ -966,6 +1125,155 @@ function formatPreviewContent(text: string): string {
 }
 
 /* Media Cards */
+.media-block {
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.media-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.media-count-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #6c63ff;
+  background: rgba(108, 99, 255, 0.08);
+  border: 1px solid rgba(108, 99, 255, 0.2);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.media-block-hint {
+  margin: 4px 0 10px;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.photo-thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.photo-thumb-item {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid #e2e8f0;
+  aspect-ratio: 1;
+  background: #0f172a;
+}
+
+.photo-thumb-item.is-cover {
+  border-color: #6c63ff;
+}
+
+.photo-thumb-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cover-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: #6c63ff;
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.thumb-actions {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 4px;
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.85), transparent);
+}
+
+.thumb-action-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.thumb-action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.thumb-action-btn.remove {
+  background: rgba(239, 68, 68, 0.92);
+  color: #fff;
+}
+
+.photo-upload-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.btn-add-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #475569;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-add-url:hover:not(:disabled) {
+  border-color: #6c63ff;
+  color: #6c63ff;
+}
+
+.btn-add-url:disabled,
+.btn-upload-file.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.video-preview {
+  padding: 0;
+  background: #0f172a;
+}
+
+.preview-video-player {
+  width: 100%;
+  max-height: 180px;
+  display: block;
+}
+
+.mock-media-video :deep(.video-player-container) {
+  margin-bottom: 0;
+}
+
 .media-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
