@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { EditorContent, useEditor } from '@tiptap/vue-3'
-import StarterKit from '@tiptap/starter-kit'
-import Image from '@tiptap/extension-image'
-import Link from '@tiptap/extension-link'
-import Placeholder from '@tiptap/extension-placeholder'
-import TextAlign from '@tiptap/extension-text-align'
-import Underline from '@tiptap/extension-underline'
+import {
+  ArrowLeft,
+  Image as ImageIcon,
+  Mic,
+  Hash,
+  Link as LinkIcon,
+  Bold,
+  Italic,
+  Code,
+  List,
+  Quote,
+  Send,
+  Sparkles,
+  X
+} from 'lucide-vue-next'
 import { supabase } from '../../lib/supabase'
 
 const route = useRoute()
@@ -16,196 +24,90 @@ const router = useRouter()
 const isEdit = computed(() => Boolean(route.params.id))
 const postId = computed(() => route.params.id as string | undefined)
 
-const title = ref('')
-const slug = ref('')
-const excerpt = ref('')
-const author = ref('Olimjon Makhmudov')
+// Form states
+const title = ref('') // Optional headline / topic
+const content = ref('') // Main post content
 const coverImageUrl = ref('')
 const audioUrl = ref('')
-const tagInput = ref('')
+const author = ref('Olimjon Makhmudov')
 const tags = ref<string[]>([])
-const published = ref(false)
+const tagInput = ref('')
+const slug = ref('')
+const published = ref(true) // Default to publish for social posts
 const publishedAt = ref('')
-const saving = ref(false)
-const uploading = ref(false)
-const uploadingAudio = ref(false)
-const saveMsg = ref('')
 const slugTouched = ref(false)
 
-const editor = useEditor({
-  extensions: [
-    StarterKit,
-    Underline,
-    Image.configure({ inline: false, allowBase64: false }),
-    Link.configure({ openOnClick: false }),
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
-    Placeholder.configure({ placeholder: 'Write with headings, links, diagrams, images, and code samples...' }),
-  ],
-  content: '',
-  editorProps: {
-    attributes: { class: 'tiptap-editor' },
-  },
+// UI states
+const saving = ref(false)
+const uploadingImage = ref(false)
+const uploadingAudio = ref(false)
+const saveMsg = ref('')
+const activeTab = ref<'compose' | 'preview'>('compose')
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
+
+// Character & word counters
+const charCount = computed(() => content.value.length)
+const wordCount = computed(() => {
+  const clean = content.value.trim()
+  return clean ? clean.split(/\s+/).length : 0
 })
 
-const readMinutes = computed(() => {
-  const html = editor.value?.getHTML() ?? ''
-  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-  return Math.max(1, Math.ceil(text.split(/\s+/).filter(Boolean).length / 220))
-})
-
-watch(title, (value) => {
-  if (!slugTouched.value && !isEdit.value) {
-    slug.value = makeSlug(value)
+// Auto slug generation
+watch(title, (newTitle) => {
+  if (!slugTouched.value && !isEdit.value && newTitle.trim()) {
+    slug.value = makeSlug(newTitle)
   }
 })
 
-onMounted(loadPost)
-onBeforeUnmount(() => editor.value?.destroy())
+watch(content, (newContent) => {
+  if (!slugTouched.value && !isEdit.value && !title.value.trim() && newContent.trim()) {
+    const firstLine = newContent.split('\n')[0].slice(0, 40)
+    slug.value = makeSlug(firstLine)
+  }
+})
+
+onMounted(async () => {
+  if (isEdit.value && postId.value) {
+    await loadPost()
+  } else {
+    // Default publish time to now
+    publishedAt.value = toDatetimeLocal(new Date().toISOString())
+  }
+})
 
 async function loadPost() {
-  if (!isEdit.value || !postId.value) return
+  if (!postId.value) return
   const { data, error } = await supabase
     .from('blog_posts')
     .select('*')
     .eq('id', postId.value)
     .single()
 
-  if (error) {
-    alert(`Unable to load post: ${error.message}`)
+  if (error || !data) {
+    alert(`Unable to load post: ${error?.message || 'Not found'}`)
     await router.push('/admin/blog')
     return
   }
 
-  title.value = data.title ?? ''
-  slug.value = data.slug ?? ''
-  excerpt.value = data.excerpt ?? ''
-  author.value = data.author ?? 'Olimjon Makhmudov'
+  title.value = data.title && data.title !== 'Untitled' ? data.title : ''
+  content.value = data.content ?? ''
   coverImageUrl.value = data.cover_image_url ?? ''
   audioUrl.value = data.audio_url ?? ''
+  author.value = data.author ?? 'Olimjon Makhmudov'
   tags.value = Array.isArray(data.tags) ? data.tags : []
+  slug.value = data.slug ?? ''
   published.value = Boolean(data.published)
-  publishedAt.value = toDatetimeLocal(data.published_at)
-  editor.value?.commands.setContent(data.content ?? '')
+  publishedAt.value = toDatetimeLocal(data.published_at || data.created_at)
   slugTouched.value = Boolean(data.slug)
-}
-
-async function save() {
-  if (!title.value.trim()) {
-    alert('Please add a title.')
-    return
-  }
-
-  saving.value = true
-  saveMsg.value = ''
-
-  const now = new Date().toISOString()
-  const publishDate = published.value
-    ? fromDatetimeLocal(publishedAt.value) || now
-    : fromDatetimeLocal(publishedAt.value)
-
-  const payload = {
-    title: title.value.trim(),
-    slug: slug.value.trim() || makeSlug(title.value),
-    excerpt: excerpt.value.trim() || null,
-    content: editor.value?.getHTML() ?? '',
-    cover_image_url: coverImageUrl.value || null,
-    audio_url: audioUrl.value || null,
-    author: author.value.trim() || 'Olimjon Makhmudov',
-    tags: tags.value,
-    published: published.value,
-    published_at: publishDate,
-    updated_at: now,
-    read_minutes: readMinutes.value,
-  }
-
-  const response = isEdit.value && postId.value
-    ? await supabase.from('blog_posts').update(payload).eq('id', postId.value)
-    : await supabase.from('blog_posts').insert(payload)
-
-  if (response.error) {
-    alert(`Unable to save post: ${response.error.message}`)
-    saving.value = false
-    return
-  }
-
-  saving.value = false
-  saveMsg.value = 'Saved'
-  window.setTimeout(() => {
-    void router.push('/admin/blog')
-  }, 650)
-}
-
-async function uploadImage(event: Event, mode: 'cover' | 'inline') {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  uploading.value = true
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-')
-  const path = `blog/${mode}/${Date.now()}-${safeName}`
-  const { error } = await supabase.storage.from('article-images').upload(path, file)
-
-  if (error) {
-    alert(`Upload failed: ${error.message}`)
-    uploading.value = false
-    return
-  }
-
-  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
-  if (mode === 'cover') {
-    coverImageUrl.value = data.publicUrl
-  } else {
-    editor.value?.chain().focus().setImage({ src: data.publicUrl }).run()
-  }
-  uploading.value = false
-}
-
-async function uploadAudio(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  uploadingAudio.value = true
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-')
-  const path = `blog/audio/${Date.now()}-${safeName}`
-  const { error } = await supabase.storage.from('article-images').upload(path, file)
-
-  if (error) {
-    alert(`Audio upload failed: ${error.message}`)
-    uploadingAudio.value = false
-    return
-  }
-
-  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
-  audioUrl.value = data.publicUrl
-  uploadingAudio.value = false
-}
-
-function addTag() {
-  const value = tagInput.value.trim()
-  if (value && !tags.value.includes(value)) tags.value.push(value)
-  tagInput.value = ''
-}
-
-function removeTag(tag: string) {
-  tags.value = tags.value.filter((item) => item !== tag)
-}
-
-function handleTagKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' || event.key === ',') {
-    event.preventDefault()
-    addTag()
-  }
-}
-
-function setLink() {
-  const previousUrl = editor.value?.getAttributes('link').href as string | undefined
-  const url = prompt('Enter URL', previousUrl ?? 'https://')
-  if (!url || !editor.value) return
-  editor.value.chain().focus().setLink({ href: url }).run()
 }
 
 function makeSlug(value: string) {
   return value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 60)
 }
 
 function onSlugInput() {
@@ -225,457 +127,1287 @@ function fromDatetimeLocal(value: string) {
   if (!value) return null
   return new Date(value).toISOString()
 }
+
+// ── Text Formatting Helpers ─────────────────────────────────
+function insertFormat(prefix: string, suffix = '') {
+  const el = textareaRef.value
+  if (!el) return
+  const start = el.selectionStart
+  const end = el.selectionEnd
+  const text = content.value
+  const selected = text.slice(start, end)
+  const replacement = prefix + (selected || 'text') + suffix
+  content.value = text.slice(0, start) + replacement + text.slice(end)
+
+  nextTick(() => {
+    el.focus()
+    el.setSelectionRange(start + prefix.length, start + prefix.length + (selected ? selected.length : 4))
+  })
+}
+
+function addLinkPrompt() {
+  const url = prompt('Enter URL:')
+  if (!url) return
+  const text = prompt('Link text (optional):') || url
+  insertFormat(`[${text}](${url})`)
+}
+
+// ── Media Upload Handlers ───────────────────────────────────
+async function handleImageUpload(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  uploadingImage.value = true
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+  const path = `blog/images/${Date.now()}-${safeName}`
+  const { error } = await supabase.storage.from('article-images').upload(path, file)
+
+  if (error) {
+    alert(`Image upload failed: ${error.message}`)
+    uploadingImage.value = false
+    return
+  }
+
+  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
+  coverImageUrl.value = data.publicUrl
+  uploadingImage.value = false
+}
+
+async function handleAudioUpload(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  uploadingAudio.value = true
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+  const path = `blog/audio/${Date.now()}-${safeName}`
+  const { error } = await supabase.storage.from('article-images').upload(path, file)
+
+  if (error) {
+    alert(`Audio upload failed: ${error.message}`)
+    uploadingAudio.value = false
+    return
+  }
+
+  const { data } = supabase.storage.from('article-images').getPublicUrl(path)
+  audioUrl.value = data.publicUrl
+  uploadingAudio.value = false
+}
+
+// ── Tags Handlers ───────────────────────────────────────────
+function handleTagKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault()
+    addTag()
+  }
+}
+
+function addTag() {
+  const clean = tagInput.value.replace(/^[#\s]+|[,\s]+$/g, '').trim()
+  if (clean && !tags.value.includes(clean)) {
+    tags.value.push(clean)
+  }
+  tagInput.value = ''
+}
+
+function removeTag(tagToRemove: string) {
+  tags.value = tags.value.filter((t) => t !== tagToRemove)
+}
+
+function addSuggestedTag(tag: string) {
+  if (!tags.value.includes(tag)) {
+    tags.value.push(tag)
+  }
+}
+
+// ── Save / Publish ──────────────────────────────────────────
+async function savePost() {
+  const rawText = content.value.trim()
+
+  if (!rawText && !coverImageUrl.value && !audioUrl.value && !title.value.trim()) {
+    alert('Please enter some post content or attach media.')
+    return
+  }
+
+  saving.value = true
+  saveMsg.value = ''
+
+  // PostgreSQL schema requires `title text not null`
+  // If user didn't enter a headline, auto-derive one from first words
+  let derivedTitle = title.value.trim()
+  if (!derivedTitle) {
+    const firstLine = rawText.split('\n')[0].replace(/<[^>]+>/g, '').trim()
+    derivedTitle = firstLine ? firstLine.slice(0, 80) : `Post ${new Date().toLocaleDateString()}`
+  }
+
+  const finalSlug = slug.value.trim() || makeSlug(derivedTitle) || `post-${Date.now().toString(36)}`
+  const now = new Date().toISOString()
+  const publishTime = published.value
+    ? fromDatetimeLocal(publishedAt.value) || now
+    : fromDatetimeLocal(publishedAt.value)
+
+  // Derive simple plain-text excerpt for previews/fallback
+  const excerpt = rawText.slice(0, 160)
+
+  const payload = {
+    title: derivedTitle,
+    slug: finalSlug,
+    content: content.value,
+    excerpt: excerpt || null,
+    cover_image_url: coverImageUrl.value || null,
+    audio_url: audioUrl.value || null,
+    author: author.value.trim() || 'Olimjon Makhmudov',
+    tags: tags.value,
+    published: published.value,
+    published_at: publishTime,
+    updated_at: now,
+  }
+
+  const res = isEdit.value && postId.value
+    ? await supabase.from('blog_posts').update(payload).eq('id', postId.value)
+    : await supabase.from('blog_posts').insert(payload)
+
+  if (res.error) {
+    alert(`Save failed: ${res.error.message}`)
+    saving.value = false
+    return
+  }
+
+  saving.value = false
+  saveMsg.value = 'Saved!'
+  setTimeout(() => {
+    void router.push('/admin/blog')
+  }, 400)
+}
+
+// ── Live Preview Formatters ─────────────────────────────────
+function formatPreviewContent(text: string): string {
+  if (!text) return ''
+  // Convert markdown links [text](url)
+  let formatted = text.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+  )
+  // Convert **bold**
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  // Convert *italic*
+  formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  // Convert `code`
+  formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>')
+  // Highlight #hashtags
+  formatted = formatted.replace(/(^|\s)(#[a-zA-Z0-9_\u0080-\uffff]+)/g, '$1<span class="preview-hashtag">$2</span>')
+
+  // Wrap paragraphs
+  return formatted
+    .split(/\n\s*\n/)
+    .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .join('')
+}
 </script>
 
 <template>
-  <div class="blog-editor">
-    <header class="topbar">
-      <button type="button" class="ghost-btn" @click="router.push('/admin/blog')">Back</button>
-      <div>
-        <span>Blog editor</span>
-        <h1>{{ isEdit ? 'Edit post' : 'New post' }}</h1>
+  <div class="blog-composer-page">
+    <!-- Top Action Bar -->
+    <header class="composer-header">
+      <div class="header-left">
+        <button type="button" class="btn-back" @click="router.push('/admin/blog')">
+          <ArrowLeft :size="17" />
+          <span>Posts</span>
+        </button>
+        <div class="header-title-block">
+          <span class="eyebrow">{{ isEdit ? 'Edit Post' : 'New Post' }}</span>
+          <h1 class="header-title">{{ isEdit ? 'Edit Social Post' : 'Compose Social Post' }}</h1>
+        </div>
       </div>
-      <div class="top-actions">
-        <label class="publish-toggle">
-          <span>{{ published ? 'Published' : 'Draft' }}</span>
-          <input v-model="published" type="checkbox" />
+
+      <div class="header-right">
+        <!-- Draft / Published Toggle -->
+        <label class="publish-switch-wrap" title="Toggle publication status">
+          <input v-model="published" type="checkbox" class="publish-checkbox" />
+          <span class="switch-slider"></span>
+          <span class="switch-label" :class="{ 'is-published': published }">
+            {{ published ? 'Published' : 'Draft' }}
+          </span>
         </label>
-        <button type="button" class="save-btn" :disabled="saving" @click="save">
-          {{ saving ? 'Saving...' : saveMsg || 'Save' }}
+
+        <!-- Save Button -->
+        <button
+          type="button"
+          class="btn-save"
+          :disabled="saving"
+          @click="savePost"
+        >
+          <Send :size="15" />
+          <span>{{ saving ? 'Saving...' : saveMsg || (published ? 'Publish Post' : 'Save Draft') }}</span>
         </button>
       </div>
     </header>
 
-    <div class="editor-grid">
-      <main class="editor-main">
-        <input v-model="title" class="title-input" type="text" placeholder="Post title" />
-        <textarea v-model="excerpt" class="excerpt-input" rows="3" placeholder="Short summary shown on blog cards and article header."></textarea>
+    <!-- Mobile Tab Switcher -->
+    <div class="mobile-tab-nav">
+      <button
+        type="button"
+        class="tab-btn"
+        :class="{ active: activeTab === 'compose' }"
+        @click="activeTab = 'compose'"
+      >
+        Compose
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        :class="{ active: activeTab === 'preview' }"
+        @click="activeTab = 'preview'"
+      >
+        Live Preview
+      </button>
+    </div>
 
-        <div v-if="editor" class="toolbar">
-          <button type="button" :class="{ active: editor.isActive('bold') }" @click="editor.chain().focus().toggleBold().run()">B</button>
-          <button type="button" :class="{ active: editor.isActive('italic') }" @click="editor.chain().focus().toggleItalic().run()">I</button>
-          <button type="button" :class="{ active: editor.isActive('underline') }" @click="editor.chain().focus().toggleUnderline().run()">U</button>
-          <span></span>
-          <button type="button" :class="{ active: editor.isActive('heading', { level: 2 }) }" @click="editor.chain().focus().toggleHeading({ level: 2 }).run()">H2</button>
-          <button type="button" :class="{ active: editor.isActive('heading', { level: 3 }) }" @click="editor.chain().focus().toggleHeading({ level: 3 }).run()">H3</button>
-          <button type="button" :class="{ active: editor.isActive('bulletList') }" @click="editor.chain().focus().toggleBulletList().run()">List</button>
-          <button type="button" :class="{ active: editor.isActive('orderedList') }" @click="editor.chain().focus().toggleOrderedList().run()">1. List</button>
-          <button type="button" :class="{ active: editor.isActive('blockquote') }" @click="editor.chain().focus().toggleBlockquote().run()">Quote</button>
-          <button type="button" :class="{ active: editor.isActive('codeBlock') }" @click="editor.chain().focus().toggleCodeBlock().run()">Code block</button>
-          <button type="button" :class="{ active: editor.isActive('code') }" @click="editor.chain().focus().toggleCode().run()">Code</button>
-          <span></span>
-          <button type="button" @click="setLink">Link</button>
-          <label class="upload-inline">
-            Image
-            <input type="file" accept="image/*" hidden @change="uploadImage($event, 'inline')" />
+    <!-- Main Two-Column Layout -->
+    <div class="composer-layout">
+      <!-- ── Left Column: Composer Form ──────────────────── -->
+      <section
+        class="composer-column"
+        :class="{ 'mobile-hidden': activeTab === 'preview' }"
+      >
+        <!-- Headline / Topic (Optional) -->
+        <div class="composer-card">
+          <label class="field-label" for="post-headline">
+            Headline / Topic <span class="label-optional">(Optional)</span>
           </label>
-          <button type="button" @click="editor.chain().focus().undo().run()">Undo</button>
-          <button type="button" @click="editor.chain().focus().redo().run()">Redo</button>
+          <input
+            id="post-headline"
+            v-model="title"
+            type="text"
+            placeholder="e.g. Milestone update, Quick tip, or Leave blank"
+            class="input-headline"
+          />
         </div>
 
-        <EditorContent :editor="editor" class="editor-content" />
-      </main>
+        <!-- Main Content Area -->
+        <div class="composer-card content-card">
+          <div class="content-toolbar">
+            <button
+              type="button"
+              class="tool-btn"
+              title="Bold (**text**)"
+              @click="insertFormat('**', '**')"
+            >
+              <Bold :size="15" />
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              title="Italic (*text*)"
+              @click="insertFormat('*', '*')"
+            >
+              <Italic :size="15" />
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              title="Link"
+              @click="addLinkPrompt"
+            >
+              <LinkIcon :size="15" />
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              title="Code snippet (`code`)"
+              @click="insertFormat('`', '`')"
+            >
+              <Code :size="15" />
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              title="List (- item)"
+              @click="insertFormat('\n- ')"
+            >
+              <List :size="15" />
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              title="Quote (> quote)"
+              @click="insertFormat('\n> ')"
+            >
+              <Quote :size="15" />
+            </button>
 
-      <aside class="editor-side">
-        <section class="side-card">
-          <h2>Cover image</h2>
-          <div v-if="coverImageUrl" class="cover-preview">
-            <img :src="coverImageUrl" alt="Cover preview" />
-            <button type="button" @click="coverImageUrl = ''">Remove</button>
+            <div class="toolbar-counters">
+              <span>{{ wordCount }} words</span>
+              <span>·</span>
+              <span>{{ charCount }} chars</span>
+            </div>
           </div>
-          <label v-else class="upload-cover">
-            {{ uploading ? 'Uploading...' : 'Upload cover' }}
-            <input type="file" accept="image/*" hidden @change="uploadImage($event, 'cover')" />
-          </label>
-        </section>
 
-        <section class="side-card">
-          <h2>Audio Track</h2>
-          <div v-if="audioUrl" class="cover-preview">
-            <audio :src="audioUrl" controls style="width: 100%; border-radius: 8px;"></audio>
-            <button type="button" @click="audioUrl = ''">Remove Audio</button>
+          <textarea
+            ref="textareaRef"
+            v-model="content"
+            rows="8"
+            placeholder="What's on your mind? Share an update, insight, or announcement..."
+            class="composer-textarea"
+          ></textarea>
+        </div>
+
+        <!-- Attachments Card (Image + Audio) -->
+        <div class="composer-card media-card">
+          <h2 class="card-subtitle">Media Attachments</h2>
+
+          <!-- Image Attachment -->
+          <div class="media-row">
+            <div class="media-slot">
+              <span class="media-slot-title">Photo / Image</span>
+
+              <div v-if="coverImageUrl" class="media-preview-box image-preview">
+                <img :src="coverImageUrl" alt="Attached preview" />
+                <button
+                  type="button"
+                  class="btn-remove-media"
+                  title="Remove image"
+                  @click="coverImageUrl = ''"
+                >
+                  <X :size="15" />
+                </button>
+              </div>
+
+              <div v-else class="upload-controls">
+                <label class="btn-upload-file">
+                  <ImageIcon :size="16" />
+                  <span>{{ uploadingImage ? 'Uploading...' : 'Upload Image' }}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    :disabled="uploadingImage"
+                    @change="handleImageUpload"
+                  />
+                </label>
+                <input
+                  v-model="coverImageUrl"
+                  type="url"
+                  placeholder="Or paste image URL"
+                  class="input-url"
+                />
+              </div>
+            </div>
+
+            <!-- Voice / Audio Attachment -->
+            <div class="media-slot">
+              <span class="media-slot-title">Voice / Audio Note</span>
+
+              <div v-if="audioUrl" class="media-preview-box audio-preview">
+                <audio :src="audioUrl" controls class="preview-audio-player"></audio>
+                <button
+                  type="button"
+                  class="btn-remove-media"
+                  title="Remove audio"
+                  @click="audioUrl = ''"
+                >
+                  <X :size="15" />
+                </button>
+              </div>
+
+              <div v-else class="upload-controls">
+                <label class="btn-upload-file audio-upload-btn">
+                  <Mic :size="16" />
+                  <span>{{ uploadingAudio ? 'Uploading...' : 'Upload Audio' }}</span>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    hidden
+                    :disabled="uploadingAudio"
+                    @change="handleAudioUpload"
+                  />
+                </label>
+                <input
+                  v-model="audioUrl"
+                  type="url"
+                  placeholder="Or paste audio URL"
+                  class="input-url"
+                />
+              </div>
+            </div>
           </div>
-          <label v-else class="upload-cover">
-            {{ uploadingAudio ? 'Uploading...' : 'Upload audio' }}
-            <input type="file" accept="audio/*" hidden @change="uploadAudio($event)" />
-          </label>
-        </section>
+        </div>
 
-        <section class="side-card">
-          <h2>Details</h2>
-          <label>
-            Author
-            <input v-model="author" type="text" />
-          </label>
-          <label>
-            Slug
-            <input v-model="slug" type="text" @input="onSlugInput" />
-          </label>
-          <label>
-            Publish date
-            <input v-model="publishedAt" type="datetime-local" />
-          </label>
-          <p>{{ readMinutes }} min read</p>
-        </section>
+        <!-- Hashtags / Tags Card -->
+        <div class="composer-card tags-card">
+          <h2 class="card-subtitle">Hashtags &amp; Topics</h2>
 
-        <section class="side-card">
-          <h2>Tags</h2>
-          <div class="tags">
-            <span v-for="tag in tags" :key="tag">
-              {{ tag }}
-              <button type="button" @click="removeTag(tag)">x</button>
+          <div class="tags-input-wrap">
+            <Hash :size="16" class="hash-icon" />
+            <input
+              v-model="tagInput"
+              type="text"
+              placeholder="Add tag and press Enter or comma..."
+              class="input-tag"
+              @keydown="handleTagKeydown"
+              @blur="addTag"
+            />
+          </div>
+
+          <!-- Existing Tags -->
+          <div v-if="tags.length" class="tag-chips-row">
+            <span v-for="tag in tags" :key="tag" class="tag-chip">
+              #{{ tag }}
+              <button type="button" @click="removeTag(tag)" aria-label="Remove tag">×</button>
             </span>
           </div>
-          <input
-            v-model="tagInput"
-            type="text"
-            placeholder="Add tag"
-            @keydown="handleTagKeydown"
-            @blur="addTag"
-          />
-        </section>
 
-        <section class="side-card">
-          <h2>Checklist</h2>
-          <ul>
-            <li :class="{ done: Boolean(coverImageUrl) }">Cover image</li>
-            <li :class="{ done: Boolean(author.trim()) }">Author</li>
-            <li :class="{ done: tags.length > 0 }">Tags</li>
-            <li :class="{ done: Boolean(excerpt.trim()) }">Excerpt</li>
-            <li :class="{ done: readMinutes > 0 }">Readable content</li>
-          </ul>
-        </section>
+          <!-- Suggestions -->
+          <div class="tag-suggestions">
+            <span class="suggestion-label">Suggestions:</span>
+            <button
+              v-for="s in ['engineering', 'typescript', 'vue', 'architecture', 'webdev']"
+              :key="s"
+              type="button"
+              class="suggestion-btn"
+              @click="addSuggestedTag(s)"
+            >
+              + #{{ s }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Details & Publishing Options -->
+        <div class="composer-card options-card">
+          <h2 class="card-subtitle">Post Details</h2>
+
+          <div class="options-grid">
+            <div class="option-field">
+              <label for="post-slug">Slug (URL)</label>
+              <input
+                id="post-slug"
+                v-model="slug"
+                type="text"
+                placeholder="auto-generated-slug"
+                class="input-detail"
+                @input="onSlugInput"
+              />
+            </div>
+
+            <div class="option-field">
+              <label for="post-publish-date">Publish Date</label>
+              <input
+                id="post-publish-date"
+                v-model="publishedAt"
+                type="datetime-local"
+                class="input-detail"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Right Column: Live Feed Preview ─────────────── -->
+      <aside
+        class="preview-column"
+        :class="{ 'mobile-hidden': activeTab === 'compose' }"
+      >
+        <div class="preview-sticky-wrap">
+          <div class="preview-header-bar">
+            <span class="preview-badge">
+              <Sparkles :size="14" />
+              Live Feed Preview
+            </span>
+            <span class="preview-hint">Matches portfolio feed</span>
+          </div>
+
+          <!-- The Live Social Post Card Preview -->
+          <div class="mock-feed-shell">
+            <article class="mock-post-card">
+              <!-- Author Header -->
+              <header class="mock-header">
+                <img src="/portrait.png" alt="Olimjon" class="mock-avatar" />
+                <div class="mock-author-info">
+                  <div class="mock-name-line">
+                    <span class="mock-author-name">{{ author || 'Olimjon Makhmudov' }}</span>
+                    <span class="mock-verified">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.2 14.2l-3.5-3.5 1.41-1.41 2.09 2.09 5.69-5.69 1.41 1.41-7.1 7.1z"/>
+                      </svg>
+                    </span>
+                    <span class="mock-handle">@mkhdov</span>
+                    <span class="mock-dot">·</span>
+                    <span class="mock-time">Just now</span>
+                  </div>
+                </div>
+              </header>
+
+              <!-- Optional Headline -->
+              <h3 v-if="title.trim()" class="mock-headline">
+                {{ title }}
+              </h3>
+
+              <!-- Post Body Content -->
+              <div
+                class="mock-body"
+                v-html="formatPreviewContent(content) || '<p class=\'placeholder-text\'>Your post text will appear here...</p>'"
+              ></div>
+
+              <!-- Media Preview -->
+              <div v-if="coverImageUrl" class="mock-media-image">
+                <img :src="coverImageUrl" alt="Attached media" />
+              </div>
+
+              <!-- Audio Preview -->
+              <div v-if="audioUrl" class="mock-media-audio">
+                <audio :src="audioUrl" controls class="mock-audio-player"></audio>
+              </div>
+
+              <!-- Hashtags -->
+              <div v-if="tags.length" class="mock-tags-row">
+                <span v-for="tag in tags" :key="tag" class="mock-tag-pill">
+                  #{{ tag }}
+                </span>
+              </div>
+
+              <!-- Mock Social Action Bar -->
+              <footer class="mock-footer">
+                <div class="mock-reactions">
+                  <span class="mock-reaction-btn">👍 1</span>
+                  <span class="mock-reaction-btn">❤️</span>
+                  <span class="mock-reaction-btn">🔥</span>
+                </div>
+                <div class="mock-actions">
+                  <span class="mock-action-link">💬 Comment</span>
+                  <span class="mock-action-link">↗ Share</span>
+                </div>
+              </footer>
+            </article>
+          </div>
+        </div>
       </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.blog-editor {
-  min-height: 100%;
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+.blog-composer-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   font-family: 'Inter', system-ui, sans-serif;
-  color: #0f172a;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-.topbar {
-  position: sticky;
-  top: -32px;
-  z-index: 5;
+/* ── Top Header ─────────────────────────────────────────── */
+.composer-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  margin: -32px -28px 24px;
-  padding: 18px 28px;
-  background: rgba(255, 255, 255, 0.94);
-  border-bottom: 1px solid #e2e8f0;
-  backdrop-filter: blur(12px);
-}
-
-.topbar div:nth-child(2) {
-  flex: 1;
-}
-
-.topbar span {
-  color: #6c63ff;
-  font-size: 0.72rem;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.topbar h1 {
-  margin: 2px 0 0;
-  font-size: 1.25rem;
-}
-
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.ghost-btn,
-.save-btn,
-.toolbar button,
-.upload-inline,
-.upload-cover,
-.cover-preview button {
-  border: 1px solid rgba(108, 99, 255, 0.22);
-  border-radius: 8px;
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.ghost-btn {
-  color: #6c63ff;
-  background: rgba(108, 99, 255, 0.06);
-  padding: 9px 12px;
-}
-
-.save-btn {
-  min-width: 96px;
-  color: #ffffff;
-  background: #6c63ff;
-  padding: 10px 16px;
-}
-
-.publish-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #64748b;
-  font-weight: 800;
-}
-
-.editor-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 310px;
-  gap: 22px;
-  align-items: start;
-}
-
-.editor-main,
-.side-card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-}
-
-.editor-main {
-  padding: 24px;
-}
-
-.title-input,
-.excerpt-input,
-.side-card input {
-  width: 100%;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 12px 14px;
-  color: #0f172a;
-  font: inherit;
-}
-
-.title-input {
-  border: 0;
-  padding: 0;
-  margin-bottom: 16px;
-  font-size: clamp(2rem, 5vw, 3.4rem);
-  font-weight: 800;
-  outline: 0;
-}
-
-.excerpt-input {
-  resize: vertical;
-  margin-bottom: 16px;
-}
-
-.toolbar {
-  display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 14px;
-  padding: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
 }
 
-.toolbar span {
-  width: 1px;
-  background: #e2e8f0;
-}
-
-.toolbar button,
-.upload-inline {
-  color: #475569;
-  background: #ffffff;
-  padding: 7px 10px;
-  font-size: 0.83rem;
-}
-
-.toolbar button.active {
-  color: #ffffff;
-  background: #6c63ff;
-}
-
-.editor-content {
-  min-height: 560px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 22px;
-}
-
-:deep(.tiptap-editor) {
-  min-height: 520px;
-  outline: 0;
-  color: #1e293b;
-  font-size: 1rem;
-  line-height: 1.8;
-}
-
-:deep(.tiptap-editor h2) { font-size: 1.8rem; margin: 1.7rem 0 0.8rem; }
-:deep(.tiptap-editor h3) { font-size: 1.35rem; margin: 1.4rem 0 0.7rem; }
-:deep(.tiptap-editor p) { margin: 0 0 1rem; }
-:deep(.tiptap-editor blockquote) {
-  margin: 1.2rem 0;
-  padding-left: 1rem;
-  color: #64748b;
-  border-left: 3px solid #6c63ff;
-}
-:deep(.tiptap-editor pre) {
-  overflow-x: auto;
-  border-radius: 8px;
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 1rem;
-}
-:deep(.tiptap-editor code) {
-  border-radius: 5px;
-  background: #f1f5f9;
-  color: #6c63ff;
-  padding: 2px 6px;
-}
-:deep(.tiptap-editor pre code) {
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
-:deep(.tiptap-editor img) {
-  max-width: 100%;
-  border-radius: 8px;
-}
-:deep(.tiptap-editor a) {
-  color: #6c63ff;
-  text-decoration: underline;
-}
-:deep(.tiptap-editor p.is-editor-empty:first-child::before) {
-  content: attr(data-placeholder);
-  float: left;
-  height: 0;
-  color: #94a3b8;
-  pointer-events: none;
-}
-
-.editor-side {
-  display: grid;
+.header-left {
+  display: flex;
+  align-items: center;
   gap: 14px;
 }
 
-.side-card {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-}
-
-.side-card h2 {
-  margin: 0;
-  color: #475569;
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.side-card label {
-  display: grid;
-  gap: 6px;
-  color: #64748b;
-  font-size: 0.8rem;
-  font-weight: 800;
-}
-
-.side-card p {
-  margin: 0;
-  color: #64748b;
-  font-size: 0.86rem;
-  font-weight: 700;
-}
-
-.cover-preview {
-  display: grid;
-  gap: 10px;
-}
-
-.cover-preview img {
-  width: 100%;
-  max-height: 170px;
-  object-fit: cover;
-  border-radius: 8px;
-}
-
-.cover-preview button {
-  color: #ef4444;
-  background: #ffffff;
-  padding: 9px;
-}
-
-.upload-cover {
-  display: grid;
-  place-items: center;
-  min-height: 130px;
-  color: #6c63ff;
-  background: rgba(108, 99, 255, 0.04);
-  border-style: dashed;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tags span {
+.btn-back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #6c63ff;
-  background: rgba(108, 99, 255, 0.08);
-  border-radius: 999px;
-  padding: 5px 9px;
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.tags button {
-  border: 0;
-  color: inherit;
-  background: transparent;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #64748b;
+  font-size: 0.88rem;
+  font-weight: 600;
   cursor: pointer;
-  font: inherit;
+  transition: all 0.15s ease;
 }
 
-.side-card ul {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding-left: 18px;
-  color: #94a3b8;
-  font-size: 0.86rem;
+.btn-back:hover {
+  color: #6c63ff;
+  border-color: #6c63ff;
+}
+
+.eyebrow {
+  color: #6c63ff;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: block;
+}
+
+.header-title {
+  margin: 2px 0 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.6rem;
   font-weight: 700;
+  color: #0f172a;
 }
 
-.side-card li.done {
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Switch */
+.publish-switch-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.publish-checkbox {
+  display: none;
+}
+
+.switch-slider {
+  width: 38px;
+  height: 22px;
+  background: #cbd5e1;
+  border-radius: 999px;
+  position: relative;
+  transition: background 0.2s ease;
+}
+
+.switch-slider::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.2s ease;
+}
+
+.publish-checkbox:checked + .switch-slider {
+  background: #10b981;
+}
+
+.publish-checkbox:checked + .switch-slider::after {
+  transform: translateX(16px);
+}
+
+.switch-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.switch-label.is-published {
   color: #059669;
 }
 
-@media (max-width: 980px) {
-  .editor-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .topbar {
-    margin: -24px -16px 20px;
-    padding: 14px 16px;
-    top: -24px;
-  }
+.btn-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #6c63ff;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(108, 99, 255, 0.28);
+  transition: all 0.2s ease;
 }
 
-@media (max-width: 640px) {
-  .topbar,
-  .top-actions {
-    align-items: stretch;
-    flex-direction: column;
+.btn-save:hover {
+  background: #5a52d5;
+  transform: translateY(-1px);
+}
+
+/* ── Mobile Tab Nav ─────────────────────────────────────── */
+.mobile-tab-nav {
+  display: none;
+  gap: 8px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+/* ── Two-Column Layout ──────────────────────────────────── */
+.composer-layout {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.composer-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.composer-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
+}
+
+.card-subtitle {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 12px;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.label-optional {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.input-headline {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  outline: none;
+  color: #0f172a;
+}
+
+.input-headline:focus {
+  border-color: #6c63ff;
+  box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.1);
+}
+
+/* Content Area */
+.content-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.tool-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tool-btn:hover {
+  background: #f8fafc;
+  color: #6c63ff;
+  border-color: #6c63ff;
+}
+
+.toolbar-counters {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.composer-textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.98rem;
+  line-height: 1.6;
+  color: #0f172a;
+  min-height: 180px;
+}
+
+/* Media Cards */
+.media-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.media-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.media-slot-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.media-preview-box {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  display: block;
+}
+
+.audio-preview {
+  padding: 10px;
+}
+
+.preview-audio-player {
+  width: 100%;
+  height: 36px;
+}
+
+.btn-remove-media {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(15, 23, 42, 0.7);
+  color: #ffffff;
+  border: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.upload-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.btn-upload-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  color: #475569;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-upload-file:hover {
+  background: #ffffff;
+  border-color: #6c63ff;
+  color: #6c63ff;
+}
+
+.input-url {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.input-url:focus {
+  border-color: #6c63ff;
+}
+
+/* Tags */
+.tags-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.hash-icon {
+  position: absolute;
+  left: 10px;
+  color: #94a3b8;
+}
+
+.input-tag {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  outline: none;
+}
+
+.input-tag:focus {
+  border-color: #6c63ff;
+}
+
+.tag-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(108, 99, 255, 0.08);
+  border: 1px solid rgba(108, 99, 255, 0.2);
+  color: #6c63ff;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.tag-chip button {
+  background: transparent;
+  border: none;
+  color: #6c63ff;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.tag-suggestions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 10px;
+}
+
+.suggestion-label {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.suggestion-btn {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.suggestion-btn:hover {
+  color: #6c63ff;
+  border-color: #6c63ff;
+}
+
+/* Options */
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.option-field label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
+.input-detail {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+/* ── Right Column: Live Feed Preview ─────────────────────── */
+.preview-column {
+  position: sticky;
+  top: 20px;
+}
+
+.preview-sticky-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preview-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.preview-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #6c63ff;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.preview-hint {
+  font-size: 0.76rem;
+  color: #94a3b8;
+}
+
+/* Mock Post Card */
+.mock-feed-shell {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 20px;
+  padding: 14px;
+}
+
+.mock-post-card {
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+.mock-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.mock-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid #e2e8f0;
+}
+
+.mock-name-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.mock-author-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mock-verified {
+  color: #6c63ff;
+  display: inline-flex;
+}
+
+.mock-handle {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.mock-dot {
+  color: #cbd5e1;
+}
+
+.mock-time {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.mock-headline {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 8px;
+}
+
+.mock-body {
+  font-size: 0.94rem;
+  line-height: 1.6;
+  color: #1e293b;
+  margin-bottom: 12px;
+  word-break: break-word;
+}
+
+.mock-body :deep(p) {
+  margin: 0 0 8px;
+}
+
+.mock-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.mock-body :deep(a) {
+  color: #6c63ff;
+  text-decoration: underline;
+}
+
+.mock-body :deep(code) {
+  background: #f1f5f9;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.88em;
+  color: #6c63ff;
+}
+
+.mock-body :deep(.preview-hashtag) {
+  color: #6c63ff;
+  font-weight: 600;
+}
+
+.placeholder-text {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.mock-media-image {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 12px;
+}
+
+.mock-media-image img {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  display: block;
+}
+
+.mock-media-audio {
+  margin-bottom: 12px;
+}
+
+.mock-audio-player {
+  width: 100%;
+  height: 38px;
+}
+
+.mock-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.mock-tag-pill {
+  background: rgba(108, 99, 255, 0.06);
+  border: 1px solid rgba(108, 99, 255, 0.15);
+  color: #6c63ff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.mock-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.mock-reactions {
+  display: flex;
+  gap: 5px;
+}
+
+.mock-reaction-btn {
+  font-size: 0.78rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.mock-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.mock-action-link {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .composer-layout {
+    grid-template-columns: 1fr;
+  }
+  .mobile-tab-nav {
+    display: flex;
+  }
+  .mobile-hidden {
+    display: none;
+  }
+  .media-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>
